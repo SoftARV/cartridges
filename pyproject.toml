@@ -81,5 +81,9 @@ allow-star-arg-any = true
 suppress-dummy-args = true
 suppress-none-returning = true
 
+[tool.ruff.lint.per-file-ignores]
+# unittest discovery supports standalone files and uses its own assertions.
+"tests/test_*.py" = ["INP001", "PT009"]
+
 [tool.ruff.lint.pydocstyle]
 property-decorators = ["gi.repository.GObject.Property"]
