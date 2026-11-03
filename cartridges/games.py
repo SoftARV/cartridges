@@ -6,6 +6,8 @@
 import json
 import os
 import subprocess
+import tempfile
+from contextlib import suppress
 from pathlib import Path, PureWindowsPath
 from shlex import quote
 from types import UnionType
@@ -116,8 +118,25 @@ class Game(Gio.SimpleActionGroup):
 
         properties = {prop.name: getattr(self, prop.name) for prop in PROPERTIES}
         GAMES_DIR.mkdir(parents=True, exist_ok=True)
-        with path.open("w", encoding="utf-8") as f:
-            json.dump(properties, f, indent=4, sort_keys=True)
+        temporary_path = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                dir=GAMES_DIR,
+                prefix=".game-",
+                suffix=".tmp",
+                delete=False,
+            ) as f:
+                temporary_path = Path(f.name)
+                json.dump(properties, f, indent=4, sort_keys=True)
+            temporary_path.replace(path)
+        except BaseException:
+            # Cleanup must not hide the original save failure.
+            if temporary_path is not None:
+                with suppress(OSError):
+                    temporary_path.unlink(missing_ok=True)
+            raise
 
 
 def format_executable(executable: str) -> str:
