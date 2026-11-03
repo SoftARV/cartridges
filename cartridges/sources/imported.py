@@ -37,8 +37,8 @@ def get_games() -> Generator[Game]:
 
 def new() -> Game:
     """Create a new game for the user to manually set its properties."""
-    numbers = {int(p.stem.rsplit("_", 1)[1]) for p in get_paths()}
-    number = next(i for i in itertools.count() if i not in numbers)
+    ids = {p.stem for p in get_paths()}
+    number = next(i for i in itertools.count() if f"{ID}_{i}" not in ids)
     return Game(game_id=f"{ID}_{number}", source=ID, added=int(time.time()))
 
 
