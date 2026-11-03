@@ -94,8 +94,9 @@ class GameEditable(GObject.Object):
             return
 
         if not self.game:
-            self.game = imported.new()
-            sources.get(imported.ID).append(self.game)
+            source = sources.get(imported.ID)
+            self.game = imported.new(source)
+            source.append(self.game)
 
         self.game.executable = self.executable
         if self.game.name != self.name:
