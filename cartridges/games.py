@@ -6,7 +6,7 @@
 import json
 import os
 import subprocess
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from shlex import quote
 from types import UnionType
 from typing import Any, NamedTuple, Self
@@ -99,10 +99,23 @@ class Game(Gio.SimpleActionGroup):
 
     def save(self):
         """Save the game's properties to disk."""
-        properties = {prop.name: getattr(self, prop.name) for prop in PROPERTIES}
+        game_id = self.game_id
+        if (
+            not game_id
+            or game_id in {".", ".."}
+            or any(char in game_id for char in ("/", "\\", "\0"))
+            or PureWindowsPath(game_id).drive
+        ):
+            msg = "Game ID must be a non-empty filename without path components"
+            raise ValueError(msg)
 
+        path = GAMES_DIR / (game_id + ".json")
+        if path.is_symlink():
+            msg = "Game record destination must not be a symlink"
+            raise OSError(msg)
+
+        properties = {prop.name: getattr(self, prop.name) for prop in PROPERTIES}
         GAMES_DIR.mkdir(parents=True, exist_ok=True)
-        path = Path(f"{GAMES_DIR / self.game_id}.json")
         with path.open("w", encoding="utf-8") as f:
             json.dump(properties, f, indent=4, sort_keys=True)
 
