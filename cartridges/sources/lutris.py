@@ -2,8 +2,10 @@
 # SPDX-FileCopyrightText: Copyright 2023 Geoffrey Coulaud
 # SPDX-FileCopyrightText: Copyright 2022-2026 kramo
 
+import logging
 import sqlite3
 from collections.abc import Generator
+from contextlib import closing
 from gettext import gettext as _
 from pathlib import Path
 
@@ -40,17 +42,29 @@ _QUERY = """
 
 def get_games() -> Generator[Game]:
     """Installed Lutris games."""
-    coverart = _data_dir() / "coverart"
-    with sqlite3.connect(_data_dir() / "pga.db") as conn:
-        for row in conn.execute(_QUERY):
-            yield Game(
-                executable=f"{OPEN} lutris:rungameid/{row[0]}",
-                game_id=f"{ID}_{row[3]}_{row[0]}",
-                source=f"{ID}_{row[3]}",
-                hidden=row[4],
-                name=row[1],
-                cover=cover.at_path(coverart / f"{row[2]}.jpg"),
-            )
+    directory = _data_dir()
+    coverart = directory / "coverart"
+    uri = (directory / "pga.db").resolve().as_uri() + "?mode=ro"
+    try:
+        with closing(sqlite3.connect(uri, uri=True)) as conn:
+            for row in conn.execute(_QUERY):
+                if not isinstance(row[0], int) or any(
+                    not isinstance(value, str) or not value for value in row[1:4]
+                ):
+                    logging.getLogger(__name__).warning("Lutris: invalid game row")
+                    continue
+                yield Game(
+                    executable=f"{OPEN} lutris:rungameid/{row[0]}",
+                    game_id=f"{ID}_{row[3]}_{row[0]}",
+                    source=f"{ID}_{row[3]}",
+                    hidden=row[4],
+                    name=row[1],
+                    cover=cover.at_path(coverart / f"{row[2]}.jpg"),
+                )
+    except sqlite3.Error as error:
+        logging.getLogger(__name__).warning(
+            "Lutris: could not read game database (%s)", type(error).__name__
+        )
 
 
 def _data_dir() -> Path:

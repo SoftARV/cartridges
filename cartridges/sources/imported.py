@@ -3,6 +3,7 @@
 
 import itertools
 import json
+import logging
 import time
 from collections.abc import Generator, Iterable
 from gettext import gettext as _
@@ -22,12 +23,18 @@ def get_games() -> Generator[Game]:
         try:
             with path.open(encoding="utf-8") as f:
                 data = json.load(f)
-        except (JSONDecodeError, UnicodeDecodeError):
+        except (OSError, JSONDecodeError, UnicodeDecodeError):
+            logging.getLogger(__name__).warning("Added: could not read a game record")
+            continue
+
+        if not isinstance(data, dict):
+            logging.getLogger(__name__).warning("Added: invalid game record shape")
             continue
 
         try:
             game = Game.from_data(data)
         except TypeError:
+            logging.getLogger(__name__).warning("Added: invalid game record fields")
             continue
 
         base = COVERS_DIR / game.game_id
