@@ -28,11 +28,12 @@ class SourceSidebarItem(Adw.SidebarItem):
         self._source_bindings.bind("icon-name", self, "icon-name", flags)
         self.bind_property("source", self._source_bindings, "source")
 
-        self.model = Gtk.FilterListModel(filter=games.filter_, watch_items=True)
+        filtered_model = Gtk.FilterListModel(filter=games.filter_, watch_items=True)
+        self.model = Gtk.SortListModel(model=filtered_model, sorter=games.sorter)
         self.model.bind_property(
             "n-items", self, "visible", GObject.BindingFlags.SYNC_CREATE
         )
-        self.bind_property("source", self.model, "model")
+        self.bind_property("source", filtered_model, "model")
         self.source = source
 
 
