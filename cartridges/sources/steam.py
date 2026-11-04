@@ -83,6 +83,10 @@ class _AppInfo(NamedTuple):
         try:
             common = dict(_load_binary_vdf(fp, key_table))["appinfo"]["common"]
         except (SyntaxError, TypeError, KeyError):
+            _logger.warning("Steam: invalid optional app metadata")
+            return cls()
+        if not isinstance(common, dict):
+            _logger.warning("Steam: invalid optional app metadata shape")
             return cls()
 
         try:
@@ -101,23 +105,37 @@ class _AppInfo(NamedTuple):
                 for key in keys:
                     value = value.get(key)
 
-                capsule = value.get("english", value.popitem()[1])
-                break
+                candidate = value.get("english") or next(iter(value.values()), None)
+                if isinstance(candidate, str):
+                    capsule = candidate
+                    break
 
-        return cls(common.get("type"), developer, capsule)
+        type_ = common.get("type")
+        if not isinstance(type_, str | None):
+            _logger.warning("Steam: invalid optional app type")
+            type_ = None
+        return cls(type_, developer, capsule)
 
 
 def get_games() -> Generator[Game]:
     """Installed Steam games."""
     librarycache = _data_dir() / "appcache" / "librarycache"
-    with (_data_dir() / "appcache" / "appinfo.vdf").open("rb") as fp:
-        appinfo = defaultdict(_AppInfo, _parse_appinfo_vdf(fp))
+    appinfo = defaultdict(_AppInfo)
+    try:
+        with (_data_dir() / "appcache" / "appinfo.vdf").open("rb") as fp:
+            appinfo.update(_parse_appinfo_vdf(fp))
+    except FileNotFoundError:
+        pass
+    except (OSError, SyntaxError, ValueError, struct.error):
+        _logger.warning("Steam: could not read optional appinfo; using manifests")
+        appinfo.clear()
 
     appids = set()
     for manifest in _manifests():
         try:
             name, appid, stateflags, lastplayed = _App.from_manifest(manifest)
-        except ValueError:
+        except (OSError, ValueError):
+            _logger.warning("Steam: could not read a game manifest")
             continue
 
         duplicate = appid in appids
@@ -178,7 +196,7 @@ def _manifests() -> Generator[Path]:
 
 def _parse_appinfo_vdf(fp: BinaryIO) -> Generator[tuple[str, _AppInfo]]:
     if fp.read(4) != _APPINFO_MAGIC:
-        _logger.warning("Magic number mismatch, parsing appinfo.vdf will likely fail.")
+        raise SyntaxError
 
     fp.seek(4, SEEK_CUR)
     table_offset = struct.unpack("q", fp.read(8))[0]
@@ -217,12 +235,19 @@ def _read_string(fp: BinaryIO, *, wide: bool = False) -> str:
 
 
 def _find_cover(path: Path, capsule: str | None = None) -> Gdk.Paintable | None:
-    paths = [*itertools.chain.from_iterable(path.rglob(p) for p in _CAPSULE_NAMES)]
+    try:
+        paths = [*itertools.chain.from_iterable(path.rglob(p) for p in _CAPSULE_NAMES)]
+    except OSError:
+        _logger.warning("Steam: could not scan optional artwork")
+        paths = []
     if capsule:
         paths.insert(0, path / capsule)
 
     for p in paths:
-        if c := cover.at_path(p):
-            return c
+        try:
+            if c := cover.at_path(p):
+                return c
+        except OSError:
+            _logger.warning("Steam: could not read optional artwork")
 
     return None
