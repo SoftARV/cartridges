@@ -130,3 +130,86 @@ class GameDetailsEditingTests(unittest.TestCase):
         self.assertEqual(
             (self.game.name, self.game.developer, self.game.executable), self.values()
         )
+
+    def test_navigation_and_game_switching_discard_old_drafts(self):
+        """The hidden-page callback ends editing; other games retain their values."""
+        other = Game(
+            game_id="imported_1",
+            source="imported",
+            name="Other",
+            developer="Other studio",
+            executable="other-command",
+        )
+        actions.edit(self.game)
+        self.draft()
+        self.navigation.pop()
+        self.drain()
+        self.assertFalse(self.details.editing)
+        actions.edit(self.game)
+        self.assertEqual(self.values(), ("Saved", "", "true"))
+        self.draft()
+        self.details.game = other
+        self.details.edit()
+        self.assertEqual(self.values(), ("Other", "Other studio", "other-command"))
+        self.draft()
+        self.details.game = self.game
+        self.details.edit()
+        self.assertEqual(self.values(), ("Saved", "", "true"))
+        self.details.activate_action("details.cancel")
+        self.details.activate_action("details.cancel")
+        self.drain()
+        self.assertIs(self.navigation.get_visible_page(), self.home)
+
+    def test_failed_apply_retains_draft_for_retry_or_cancel(self):
+        """Exercise actual entries and Apply actions for existing and new games."""
+        for adding in (False, True):
+            for retry in (False, True):
+                with self.subTest(adding=adding, retry=retry):
+                    if adding:
+                        actions.add()
+                    else:
+                        actions.edit(self.game)
+                    committed = (
+                        self.game.name,
+                        self.game.developer,
+                        self.game.executable,
+                    )
+                    before = {p.name: p.read_bytes() for p in self.root.glob("*.json")}
+                    count = len(list(self.source))
+                    self.window.send_toast.reset_mock()
+                    self.draft()
+                    with patch.object(Game, "save", side_effect=PermissionError):
+                        self.details.activate_action("details.apply")
+                    self.assertTrue(self.details.editing)
+                    self.details.edit()
+                    self.assertEqual(self.values(), ("Draft", "Draft studio", "false"))
+                    self.assertEqual(
+                        (self.game.name, self.game.developer, self.game.executable),
+                        committed,
+                    )
+                    self.assertEqual(
+                        {p.name: p.read_bytes() for p in self.root.glob("*.json")},
+                        before,
+                    )
+                    self.assertEqual(len(list(self.source)), count)
+                    self.window.send_toast.assert_called_once()
+                    if retry:
+                        self.details.activate_action("details.apply")
+                        self.assertFalse(self.details.editing)
+                        self.assertEqual(len(list(self.source)), count + int(adding))
+                        saved = self.details.game
+                        self.assertTrue((self.root / f"{saved.game_id}.json").exists())
+                        self.details.edit()
+                        self.assertEqual(
+                            self.values(), ("Draft", "Draft studio", "false")
+                        )
+                        self.details.activate_action("details.cancel")
+                    else:
+                        self.details.activate_action("details.cancel")
+                        if adding:
+                            actions.add()
+                            self.assertEqual(self.values(), ("", "", ""))
+                        else:
+                            self.details.edit()
+                            self.assertEqual(self.values(), committed)
+                        self.details.activate_action("details.cancel")
