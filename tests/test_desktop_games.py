@@ -9,10 +9,10 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from gi.repository import GLib
+from gi.repository import Gdk, GLib
 
-from cartridges import games
-from cartridges.sources import desktop
+from cartridges import games, sources
+from cartridges.sources import desktop, steam
 
 
 class DesktopGamesTests(unittest.TestCase):
@@ -125,3 +125,66 @@ class DesktopGamesTests(unittest.TestCase):
         self.assertEqual(
             [(g.game_id, g.name) for g in loaded], [("desktop_healthy", "Same title")]
         )
+
+    def test_combined_sources_preserve_steam_artwork_without_writes(self):
+        """Exclude shortcuts independently of source order or manifest presence."""
+        self.write_entry("steam.desktop", "steam steam://rungameid/2344520")
+        self.write_entry("ordinary.desktop", "ordinary-game")
+        steam_root = self.root / "steam"
+        apps = steam_root / "steamapps"
+        apps.mkdir(parents=True)
+        (apps / "libraryfolders.vdf").write_text(f'"path" "{steam_root}"\n')
+        manifest = apps / "appmanifest_2344520.acf"
+        manifest.write_text(
+            '"name" "Same title"\n"appid" "2344520"\n"StateFlags" "4"\n'
+        )
+        capsule = steam_root / "appcache/librarycache/2344520/library_600x900.jpg"
+        capsule.parent.mkdir(parents=True)
+        capsule.touch()
+        artwork = Gdk.MemoryTexture.new(
+            1, 1, Gdk.MemoryFormat.R8G8B8A8, GLib.Bytes.new(bytes(4)), 4
+        )
+        saved = games.Game(
+            game_id="desktop_steam",
+            source="desktop",
+            name="Old shortcut",
+            executable="true",
+        )
+        saved.save()
+        with (
+            patch.object(steam, "_DATA_PATHS", (steam_root,)),
+            patch.object(steam.cover, "at_path", return_value=artwork) as read_cover,
+            patch.object(games.Game, "save", side_effect=AssertionError),
+        ):
+            for present in (True, False):
+                if not present:
+                    manifest.unlink()
+                before = {
+                    p.relative_to(self.root): p.read_bytes()
+                    for p in self.root.rglob("*")
+                    if p.is_file()
+                }
+                for modules in ((steam, desktop), (desktop, steam)):
+                    with self.subTest(present=present, first=modules[0].ID):
+                        read_cover.reset_mock()
+                        loaded = [
+                            g for module in modules for g in sources.Source(module, 100)
+                        ]
+                        expected = ["desktop_ordinary"]
+                        if present:
+                            expected.append("steam_2344520")
+                            game = next(g for g in loaded if g.source == "steam")
+                            self.assertIs(game.cover, artwork)
+                            read_cover.assert_called_once_with(capsule)
+                        else:
+                            read_cover.assert_not_called()
+                        self.assertCountEqual([g.game_id for g in loaded], expected)
+                        self.assertTrue(all(g.name == "Same title" for g in loaded))
+                        self.assertEqual(
+                            {
+                                p.relative_to(self.root): p.read_bytes()
+                                for p in self.root.rglob("*")
+                                if p.is_file()
+                            },
+                            before,
+                        )
