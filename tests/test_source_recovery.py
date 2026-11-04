@@ -10,7 +10,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from cartridges import sources
+from cartridges import games, sources
 from cartridges.games import Game
 from cartridges.sources import heroic, imported, legendary
 
@@ -22,6 +22,7 @@ class SourceRecoveryTests(unittest.TestCase):
         """Create temporary record and cover roots."""
         self.root = Path(self.enterContext(tempfile.TemporaryDirectory()))
         self.enterContext(patch.object(imported, "GAMES_DIR", self.root))
+        self.enterContext(patch.object(games, "GAMES_DIR", self.root))
         self.enterContext(patch.object(imported, "COVERS_DIR", self.root / "covers"))
 
     def test_source_keeps_games_before_io_failure(self):
