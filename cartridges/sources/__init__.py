@@ -4,6 +4,7 @@
 # pyright: reportConstantRedefinition=false
 
 import importlib
+import logging
 import os
 import pkgutil
 import sys
@@ -85,10 +86,16 @@ class Source(GObject.Object, Gio.ListModel[Game]):
             lambda _, ident: f"{ident}-symbolic",
         )
 
+        self._games = []
         try:
-            self._games = list(self._get_games(added))
-        except OSError:
-            self._games = []
+            self._games.extend(self._get_games(added))
+        except OSError as error:
+            if not isinstance(error, FileNotFoundError) or error.filename:
+                logging.getLogger(__name__).warning(
+                    "%s: could not finish reading source (%s)",
+                    self.id,
+                    type(error).__name__,
+                )
 
     def do_get_item(self, position: int) -> Game | None:
         """Get the item at `position`."""
