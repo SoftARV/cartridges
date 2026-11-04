@@ -5,6 +5,7 @@
 
 import locale
 import logging
+import time
 from collections.abc import Callable
 from gettext import gettext as _
 from typing import TYPE_CHECKING, Any, cast
@@ -145,6 +146,7 @@ def edit(game: Game):
 def play(game: Game):
     """Submit a launch request and observe its command without waiting."""
     name = game.name
+    request_time = int(time.time())
     try:
         process = game.play()
     except (OSError, ValueError) as error:
@@ -168,6 +170,21 @@ def play(game: Game):
 
     source_id = GLib.timeout_add(250, poll)
     _launch_monitors.add(source_id)
+
+    changed = request_time > game.last_played
+    try:
+        if changed:
+            game.save_changes(last_played=request_time)
+        else:
+            game.save()
+    except (OSError, TypeError, ValueError) as error:
+        logging.getLogger(__name__).warning(
+            "Could not save Last Played (%s)", type(error).__name__
+        )
+        _launch_toast(_("Launch requested, but Last Played could not be saved."))
+    else:
+        if changed:
+            sorter.changed(Gtk.SorterChange.DIFFERENT)
 
 
 def stop_launch_monitors():
