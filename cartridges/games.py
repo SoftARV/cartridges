@@ -105,6 +105,14 @@ class Game(Gio.SimpleActionGroup):
             creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0,
         )
 
+    def save_changes(self, **changes: Any):
+        """Save a proposed record before changing the live object."""
+        data = {prop.name: getattr(self, prop.name) for prop in PROPERTIES}
+        proposed = self.from_data(data | changes)
+        proposed.save()
+        for name in changes:
+            setattr(self, name, getattr(proposed, name))
+
     def save(self):
         """Save the game's properties to disk."""
         game_id = self.game_id

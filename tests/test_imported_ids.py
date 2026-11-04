@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from cartridges import sources
+from cartridges import games, sources
 from cartridges.collections import Collection
 from cartridges.games import Game
 from cartridges.sources import imported
@@ -23,6 +23,7 @@ class ImportedIDTests(unittest.TestCase):
         directory = self.enterContext(tempfile.TemporaryDirectory())
         self.games_dir = Path(directory)
         self.enterContext(patch.object(imported, "GAMES_DIR", self.games_dir))
+        self.enterContext(patch.object(games, "GAMES_DIR", self.games_dir))
 
     def test_empty_library_starts_at_zero(self):
         """Start at zero without writing a record."""
@@ -58,8 +59,8 @@ class ImportedIDTests(unittest.TestCase):
                 (self.games_dir / name).read_text(encoding="utf-8"), "unchanged"
             )
 
-    def test_unsaved_additions_have_distinct_ids_and_collection_membership(self):
-        """Exercise the real create/append flow without saving either game."""
+    def test_saved_additions_have_distinct_ids_and_collection_membership(self):
+        """Exercise the real save/append flow and preserve independent membership."""
         source = sources.Source(imported, 1)
         with patch.object(sources, "get", return_value=source):
             first = GameEditable(name="First", executable="true", developer="One")
@@ -77,7 +78,10 @@ class ImportedIDTests(unittest.TestCase):
         collection = Collection(game_ids=[first.game.game_id])
         self.assertIn(first.game.game_id, collection)
         self.assertNotIn(second.game.game_id, collection)
-        self.assertEqual(list(self.games_dir.iterdir()), [])
+        self.assertEqual(
+            {path.name for path in self.games_dir.iterdir()},
+            {"imported_0.json", "imported_1.json"},
+        )
 
     def test_disk_and_hidden_or_removed_games_reserve_ids(self):
         """Use all games in memory, even ones absent from filtered views."""

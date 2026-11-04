@@ -4,6 +4,7 @@
 # SPDX-FileCopyrightText: Copyright 2025 Jamie Gravendeel
 
 import locale
+import logging
 from gettext import gettext as _
 from typing import TYPE_CHECKING, Any, cast
 
@@ -88,21 +89,36 @@ class GameEditable(GObject.Object):
         valid = Gtk.ClosureExpression.new(bool, closures.all_, (executable, name))
         valid.bind(self, "valid", self)
 
-    def apply(self):
-        """Apply the changes."""
+    def apply(self) -> bool:
+        """Save and apply the changes, leaving failed drafts available."""
         if not self.valid:
-            return
+            return False
 
-        if not self.game:
-            source = sources.get(imported.ID)
-            self.game = imported.new(source)
-            source.append(self.game)
+        source = sources.get(imported.ID) if self.game is None else None
+        game = self.game if self.game is not None else imported.new(source)
+        if not _save_changes(
+            game, executable=self.executable, name=self.name, developer=self.developer
+        ):
+            return False
+        if source is not None:
+            self.game = game
+            source.append(game)
+        return True
 
-        self.game.executable = self.executable
-        if self.game.name != self.name:
-            self.game.name = self.name
-            sorter.changed(Gtk.SorterChange.DIFFERENT)
-        self.game.developer = self.developer
+
+def _save_changes(game: Game, **changes: Any) -> bool:
+    old_name = game.name
+    try:
+        game.save_changes(**changes)
+    except (OSError, TypeError, ValueError) as error:
+        logging.getLogger(__name__).warning(
+            "Could not save game changes (%s)", type(error).__name__
+        )
+        _window().send_toast(_("Could not save changes"))
+        return False
+    if game.name != old_name:
+        sorter.changed(Gtk.SorterChange.DIFFERENT)
+    return True
 
 
 def add():

@@ -84,9 +84,9 @@ class GameDetails(Adw.NavigationPage):
         self.name_entry.grab_focus()
 
     def _apply(self):
-        self.game_editable.apply()
-        self.game = self.game_editable.game
-        self.editing = False
+        if self.game_editable.apply():
+            self.game = self.game_editable.game
+            self.editing = False
 
     @Gtk.Template.Callback()
     def _activate_apply(self, _entry):
