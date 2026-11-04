@@ -10,6 +10,7 @@ from contextlib import closing
 from pathlib import Path
 from unittest.mock import call, patch
 
+from cartridges import games, sources
 from cartridges.sources import OPEN, lutris
 
 
@@ -20,6 +21,9 @@ class LutrisGamesTests(unittest.TestCase):
         """Isolate the database and replace unrelated artwork loading."""
         self.root = Path(self.enterContext(tempfile.TemporaryDirectory()))
         self.path = self.root / "pga.db"
+        self.records = self.root / "records"
+        self.records.mkdir()
+        self.enterContext(patch.object(games, "GAMES_DIR", self.records))
         self.enterContext(patch.object(lutris, "_DATA_PATHS", (self.root,)))
         self.artwork = self.enterContext(
             patch.object(lutris.cover, "at_path", return_value=None)
@@ -104,3 +108,38 @@ class LutrisGamesTests(unittest.TestCase):
             [game.game_id for game in loaded], ["lutris_wine_1", "lutris_linux_2"]
         )
         self.assertEqual(self.path.read_bytes(), before)
+
+    def test_source_loading_preserves_saved_visibility_without_writes(self):
+        """Apply real subsource overrides after deriving category visibility."""
+        with closing(sqlite3.connect(self.path)) as connection:
+            connection.executescript("""
+                INSERT INTO games_categories VALUES (1, 1), (1, 2), (2, 2);
+            """)
+        before = self.path.read_bytes()
+        loaded = list(sources.Source(lutris, 100))
+        self.assertCountEqual(
+            [(game.game_id, game.hidden) for game in loaded],
+            [("lutris_wine_1", True), ("lutris_linux_2", False)],
+        )
+        self.assertEqual(list(self.records.iterdir()), [])
+        for game in loaded:
+            game.hidden = not game.hidden
+            game.save()
+        records_before = {
+            path.name: path.read_bytes() for path in self.records.iterdir()
+        }
+
+        with patch.object(games.Game, "save", side_effect=AssertionError):
+            restored = list(sources.Source(lutris, 200))
+        self.assertCountEqual(
+            [(game.game_id, game.source, game.hidden) for game in restored],
+            [
+                ("lutris_wine_1", "lutris_wine", False),
+                ("lutris_linux_2", "lutris_linux", True),
+            ],
+        )
+        self.assertEqual(self.path.read_bytes(), before)
+        self.assertEqual(
+            {path.name: path.read_bytes() for path in self.records.iterdir()},
+            records_before,
+        )
