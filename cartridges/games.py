@@ -4,6 +4,7 @@
 # SPDX-FileCopyrightText: Copyright 2025 Jamie Gravendeel
 
 import json
+import logging
 import os
 import subprocess
 import tempfile
@@ -105,8 +106,16 @@ class Game(Gio.SimpleActionGroup):
             creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0,
         )
 
-    def save(self):
-        """Save the game's properties to disk."""
+    def save_changes(self, **changes: Any):
+        """Save a proposed record before changing the live object."""
+        data = {prop.name: getattr(self, prop.name) for prop in PROPERTIES}
+        proposed = self.from_data(data | changes)
+        proposed.save()
+        for name in changes:
+            setattr(self, name, getattr(proposed, name))
+
+    def _record_path(self) -> Path:
+        """Resolve a record within the trusted game directory."""
         game_id = self.game_id
         if (
             not game_id
@@ -122,6 +131,42 @@ class Game(Gio.SimpleActionGroup):
             msg = "Game record destination must not be a symlink"
             raise OSError(msg)
 
+        return path
+
+    def load_override(self):
+        """Restore a matching saved snapshot before publishing a detected game."""
+        try:
+            with self._record_path().open(encoding="utf-8") as stream:
+                data = json.load(stream)
+            if not isinstance(data, dict):
+                raise TypeError
+            saved = self.from_data(data)
+            if saved.game_id != self.game_id or saved.source != self.source:
+                raise ValueError
+        except FileNotFoundError:
+            return
+        except (OSError, TypeError, ValueError) as error:
+            logging.getLogger(__name__).warning(
+                "%s: could not restore saved game changes (%s)",
+                self.source,
+                type(error).__name__,
+            )
+            return
+
+        for prop in PROPERTIES:
+            if (
+                prop.name in {"game_id", "source", "version"}
+                or data.get(prop.name) is None
+            ):
+                continue
+            value = getattr(saved, prop.name)
+            if prop.name == "last_played":
+                value = max(self.last_played, value)
+            setattr(self, prop.name, value)
+
+    def save(self):
+        """Save the game's properties to disk."""
+        path = self._record_path()
         properties = {prop.name: getattr(self, prop.name) for prop in PROPERTIES}
         GAMES_DIR.mkdir(parents=True, exist_ok=True)
         temporary_path = None

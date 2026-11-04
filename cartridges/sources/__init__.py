@@ -121,6 +121,8 @@ class Source(GObject.Object, Gio.ListModel[Game]):
     def _get_games(self, added: int) -> Generator[Game]:
         for game in self._module.get_games():
             game.added = game.added or added
+            if self.id != "imported":
+                game.load_override()
             yield game
 
 
