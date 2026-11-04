@@ -4,6 +4,7 @@
 
 import functools
 import itertools
+import re
 import shlex
 import subprocess
 from collections.abc import Generator
@@ -86,6 +87,17 @@ def _game_from(path: Path) -> Game:
 
     exe = file.get_string("Desktop Entry", "Exec")
     if any(exe.startswith(cmd) for cmd in _EXECUTABLE_BLACKLIST):
+        raise ValueError
+
+    args = shlex.split(exe)
+    if (
+        args
+        and (
+            args[0] == "steam"
+            or (Path(args[0]).is_absolute() and Path(args[0]).name == "steam")
+        )
+        and any(re.fullmatch(r"steam://rungameid/[0-9]+", arg) for arg in args[1:])
+    ):
         raise ValueError
 
     with suppress(GLib.Error):
