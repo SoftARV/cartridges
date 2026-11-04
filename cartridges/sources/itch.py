@@ -3,8 +3,10 @@
 # SPDX-FileCopyrightText: Copyright 2022-2026 kramo
 
 import asyncio
+import logging
 import sqlite3
 from collections.abc import Generator
+from contextlib import closing
 from gettext import gettext as _
 from pathlib import Path
 from typing import cast
@@ -40,16 +42,32 @@ _QUERY = """
 def get_games() -> Generator[Game]:
     """Installed itch games."""
     app = cast(Gio.Application, Gio.Application.get_default())
-    with sqlite3.connect(_config_dir() / "db" / "butler.db") as conn:
-        for row in conn.execute(_QUERY):
-            game = Game(
-                executable=f"{OPEN} itch://caves/{row[4]}/launch",
-                game_id=f"{ID}_{row[0]}",
-                source=ID,
-                name=row[1],
-            )
-            app.create_asyncio_task(_update_cover(game, row[3] or row[2]))
-            yield game
+    uri = (_config_dir() / "db" / "butler.db").resolve().as_uri() + "?mode=ro"
+    try:
+        with closing(sqlite3.connect(uri, uri=True)) as conn:
+            for row in conn.execute(_QUERY):
+                if (
+                    not isinstance(row[0], int)
+                    or not isinstance(row[4], int)
+                    or not isinstance(row[1], str)
+                    or not row[1]
+                ):
+                    logging.getLogger(__name__).warning("itch: invalid game row")
+                    continue
+                game = Game(
+                    executable=f"{OPEN} itch://caves/{row[4]}/launch",
+                    game_id=f"{ID}_{row[0]}",
+                    source=ID,
+                    name=row[1],
+                )
+                url = row[3] or row[2]
+                if isinstance(url, str) and url:
+                    app.create_asyncio_task(_update_cover(game, url))
+                yield game
+    except sqlite3.Error as error:
+        logging.getLogger(__name__).warning(
+            "itch: could not read game database (%s)", type(error).__name__
+        )
 
 
 def _config_dir() -> Path:
