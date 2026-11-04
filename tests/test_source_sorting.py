@@ -8,7 +8,9 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
+
+from gi.repository import Gio, GLib, Gtk
 
 from cartridges import STATE_SETTINGS, games, sources
 from cartridges.games import Game
@@ -104,3 +106,108 @@ class SourceSortingTests(unittest.TestCase):
         self.zulu.blacklisted = False
         self.assertEqual(list(exposed), list(self.other))
         self.assertTrue(self.item.props.visible)
+
+    def test_saved_rename_reorders_names_and_timestamp_ties(self):
+        """Only a committed Apply invalidates the already-open source model."""
+        window = SimpleNamespace(send_toast=Mock())
+        self.enterContext(patch.object(actions, "_window", return_value=window))
+        for mode in ("a-z", "last_played"):
+            with self.subTest(mode=mode):
+                STATE_SETTINGS.set_string("sort-mode", mode)
+                draft = actions.GameEditable(
+                    game=self.beta, name="Aardvark", executable="true"
+                )
+                with patch.object(Game, "save", side_effect=PermissionError):
+                    self.assertFalse(draft.apply())
+                self.assertEqual(
+                    list(self.item.model), [self.alpha, self.beta, self.zulu]
+                )
+                self.assertEqual(self.beta.name, "beta")
+                self.assertTrue(draft.apply())
+                self.assertEqual(
+                    list(self.item.model), [self.beta, self.alpha, self.zulu]
+                )
+                draft.name = "beta"
+                self.assertTrue(draft.apply())
+
+    def test_launch_reorders_only_after_timestamp_commit(self):
+        """Source models react to accepted timestamps without real commands."""
+        STATE_SETTINGS.set_string("sort-mode", "last_played")
+        app = SimpleNamespace(
+            props=SimpleNamespace(active_window=SimpleNamespace(send_toast=Mock()))
+        )
+        self.enterContext(
+            patch.object(Gio.Application, "get_default", return_value=app)
+        )
+        self.enterContext(patch("time.time", return_value=100))
+        self.enterContext(
+            patch.object(GLib, "timeout_add", side_effect=range(100, 110))
+        )
+        self.enterContext(patch.object(GLib, "source_remove"))
+        self.addCleanup(actions.stop_launch_monitors)
+        spawn = self.enterContext(patch.object(Game, "play", return_value=Mock()))
+        spawn.side_effect = OSError
+        play = actions.GameActions(game=self.zulu).lookup_action("play")
+        play.activate(None)
+        self.assertEqual(list(self.item.model), [self.alpha, self.beta, self.zulu])
+        self.assertEqual(self.zulu.last_played, 10)
+        spawn.side_effect = None
+        with patch.object(Game, "save", side_effect=PermissionError):
+            play.activate(None)
+        self.assertEqual(list(self.item.model), [self.alpha, self.beta, self.zulu])
+        self.assertEqual(self.zulu.last_played, 10)
+        play.activate(None)
+        self.assertEqual(list(self.item.model), [self.zulu, self.alpha, self.beta])
+        self.assertEqual(self.zulu.last_played, 100)
+
+    def test_search_hidden_and_undo_preserve_sorted_subsets(self):
+        """Use the same GTK filter composition as the window's grid."""
+        window = SimpleNamespace(send_toast=Mock())
+        self.enterContext(patch.object(actions, "_window", return_value=window))
+        names = Gtk.StringFilter(
+            expression=Gtk.PropertyExpression.new(Game, None, "name")
+        )
+        developers = Gtk.StringFilter(
+            expression=Gtk.PropertyExpression.new(Game, None, "developer")
+        )
+        search = Gtk.AnyFilter()
+        search.append(names)
+        search.append(developers)
+        hidden = Gtk.BoolFilter(
+            expression=Gtk.PropertyExpression.new(Game, None, "hidden"), invert=True
+        )
+        filters = Gtk.EveryFilter()
+        filters.append(search)
+        filters.append(hidden)
+        grid = Gtk.FilterListModel(
+            model=self.item.model, filter=filters, watch_items=True
+        )
+        self.assertEqual(list(grid), [self.alpha, self.beta, self.zulu])
+        actions.hide(self.alpha)
+        actions.hide(self.zulu)
+        self.assertEqual(list(grid), [self.beta])
+        hidden.props.invert = False
+        self.assertEqual(list(grid), [self.alpha, self.zulu])
+        STATE_SETTINGS.set_string("sort-mode", "z-a")
+        self.assertEqual(list(grid), [self.zulu, self.alpha])
+        self.zulu.developer = "Studio"
+        for query, expected in (
+            ("alpha", [self.alpha]),
+            ("Studio", [self.zulu]),
+            ("missing", []),
+        ):
+            names.props.search = developers.props.search = query
+            self.assertEqual(list(grid), expected)
+            self.assertTrue(self.item.props.visible)
+        names.props.search = developers.props.search = ""
+        actions.unhide(self.zulu)
+        self.assertEqual(list(grid), [self.alpha])
+        hidden.props.invert = True
+        self.assertEqual(list(grid), [self.zulu, self.beta])
+        actions.remove(self.zulu)
+        self.assertEqual(list(grid), [self.beta])
+        undo = window.send_toast.call_args.kwargs["undo"]
+        self.assertTrue(undo())
+        self.assertEqual(list(grid), [self.zulu, self.beta])
+        self.source.append(Game(game_id="test_d", source="test", name="Delta"))
+        self.assertEqual([g.name for g in grid], ["Zulu", "Delta", "beta"])
