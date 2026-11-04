@@ -9,7 +9,7 @@ import subprocess
 import tempfile
 from contextlib import suppress
 from pathlib import Path, PureWindowsPath
-from shlex import quote
+from shlex import join, quote
 from types import UnionType
 from typing import Any, NamedTuple, Self
 
@@ -29,7 +29,7 @@ class _GameProp(NamedTuple):
 
 PROPERTIES: tuple[_GameProp, ...] = (
     _GameProp("added", int),
-    _GameProp("executable", str | list[str], required=True, editable=True),
+    _GameProp("executable", str | list, required=True, editable=True),
     _GameProp("game_id", str, required=True),
     _GameProp("source", str, required=True),
     _GameProp("hidden", bool),
@@ -79,7 +79,13 @@ class Game(Gio.SimpleActionGroup):
 
             match prop.name:
                 case "executable" if isinstance(value, list):
-                    value = " ".join(value)
+                    if (
+                        not value
+                        or not value[0]
+                        or any(not isinstance(arg, str) or "\0" in arg for arg in value)
+                    ):
+                        raise TypeError
+                    value = join(value)
                 case "version" if value and value > _SPEC_VERSION:
                     raise TypeError
                 case "version":
