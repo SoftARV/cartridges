@@ -9,7 +9,7 @@ from collections.abc import Callable
 from gettext import gettext as _
 from typing import TYPE_CHECKING, Any, cast
 
-from gi.repository import Gio, GObject, Gtk
+from gi.repository import Gio, GLib, GObject, Gtk
 
 from cartridges import STATE_SETTINGS, sources
 from cartridges.games import Game
@@ -28,6 +28,8 @@ _SORT_MODES = {
     "oldest": ("added", False),
 }
 
+_launch_monitors: set[int] = set()
+
 
 class GameActions(Gio.SimpleActionGroup):
     """Action group for game actions."""
@@ -42,7 +44,7 @@ class GameActions(Gio.SimpleActionGroup):
         self.add_action_entries((
             ("add", lambda *_: add()),
             ("edit", lambda *_: edit(self.game)),
-            ("play", lambda *_: self.game.play()),
+            ("play", lambda *_: play(self.game)),
             ("hide", lambda *_: hide(self.game)),
             ("unhide", lambda *_: unhide(self.game)),
             ("remove", lambda *_: remove(self.game)),
@@ -138,6 +140,47 @@ def edit(game: Game):
     window.details.game = game
     window.navigation_view.push_by_tag("details")
     window.details.edit()
+
+
+def play(game: Game):
+    """Submit a launch request and observe its command without waiting."""
+    name = game.name
+    try:
+        process = game.play()
+    except (OSError, ValueError) as error:
+        logging.getLogger(__name__).warning(
+            "Could not launch game (%s)", type(error).__name__
+        )
+        _launch_toast(_("Could not launch {}.").format(name))
+        return
+
+    def poll() -> bool:
+        status = process.poll()
+        if status is None:
+            return GLib.SOURCE_CONTINUE
+        _launch_monitors.discard(source_id)
+        if status:
+            logging.getLogger(__name__).warning("Launch command exited (%s)", status)
+            _launch_toast(
+                _("Launch command for {} exited unsuccessfully.").format(name)
+            )
+        return GLib.SOURCE_REMOVE
+
+    source_id = GLib.timeout_add(250, poll)
+    _launch_monitors.add(source_id)
+
+
+def stop_launch_monitors():
+    """Stop observing commands without waiting for or terminating them."""
+    for source_id in _launch_monitors:
+        GLib.source_remove(source_id)
+    _launch_monitors.clear()
+
+
+def _launch_toast(message: str):
+    app = Gio.Application.get_default()
+    if app and (window := cast(Gtk.Application, app).props.active_window):
+        cast("Window", window).send_toast(message)
 
 
 def hide(game: Game):

@@ -96,9 +96,9 @@ class Game(Gio.SimpleActionGroup):
 
         return game
 
-    def play(self):
+    def play(self) -> subprocess.Popen:
         """Run the executable command in a shell."""
-        subprocess.Popen(  # noqa: S602
+        return subprocess.Popen(  # noqa: S602
             format_executable(self.executable),
             cwd=Path.home(),
             shell=True,

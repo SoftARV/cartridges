@@ -10,6 +10,7 @@ from gi.repository import Adw
 from . import collections, sources
 from .config import APP_ID, PREFIX
 from .ui import PRIMARY_KEY
+from .ui.games import stop_launch_monitors
 from .ui.window import Window
 
 
@@ -36,6 +37,11 @@ class Application(Adw.Application):
     def do_activate(self):
         window = self.props.active_window or Window(application=self)
         window.present()
+
+    @override
+    def do_shutdown(self):
+        stop_launch_monitors()
+        Adw.Application.do_shutdown(self)
 
     def _present_about_dialog(self):
         about = Adw.AboutDialog(appdata_resource_path=f"{PREFIX}/{APP_ID}.metainfo.xml")
