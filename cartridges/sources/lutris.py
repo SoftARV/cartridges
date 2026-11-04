@@ -27,10 +27,14 @@ _QUERY = """
         games.name,
         games.slug,
         games.runner,
-        categories.name = ".hidden" as hidden
+        EXISTS (
+            SELECT 1
+            FROM games_categories
+            JOIN categories ON games_categories.category_id = categories.id
+            WHERE games_categories.game_id = games.id
+                AND categories.name = '.hidden'
+        ) AS hidden
     FROM games
-    LEFT JOIN games_categories ON games_categories.game_id = games.id
-    FULL JOIN categories ON games_categories.category_id = categories.id
     WHERE
         games.name IS NOT NULL
         AND games.slug IS NOT NULL
