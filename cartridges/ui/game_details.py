@@ -29,6 +29,8 @@ class GameDetails(Adw.NavigationPage):
 
     collections_box: CollectionsBox = Gtk.Template.Child()
     name_entry: Adw.EntryRow = Gtk.Template.Child()
+    developer_entry: Adw.EntryRow = Gtk.Template.Child()
+    executable_entry: Adw.EntryRow = Gtk.Template.Child()
 
     game_actions: GameActions = Gtk.Template.Child()
     collection_actions: CollectionActions = Gtk.Template.Child()
@@ -76,10 +78,15 @@ class GameDetails(Adw.NavigationPage):
     def add(self):
         """Add a new game."""
         self.game = None
+        self.editing = False
         self.edit()
 
     def edit(self):
         """Enter edit mode."""
+        if not self.editing:
+            self.name_entry.props.text = self.game.name if self.game else ""
+            self.developer_entry.props.text = self.game.developer if self.game else ""
+            self.executable_entry.props.text = self.game.executable if self.game else ""
         self.editing = True
         self.name_entry.grab_focus()
 
