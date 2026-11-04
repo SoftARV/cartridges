@@ -134,12 +134,16 @@ def _config_dir() -> Path:
 def _read_json(path: Path) -> Any:  # noqa: ANN401
     try:
         with path.open(encoding="utf-8") as fp:
-            return json.load(fp)
+            data = json.load(fp)
     except FileNotFoundError:
         return None
     except (OSError, JSONDecodeError, UnicodeDecodeError):
         _logger.warning("Heroic: could not read a library or configuration file")
         return None
+    if not isinstance(data, dict | list):
+        _logger.warning("Heroic: invalid library or configuration shape")
+        return None
+    return data
 
 
 def _hidden_app_names() -> Generator[str]:

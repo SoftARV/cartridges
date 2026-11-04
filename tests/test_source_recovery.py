@@ -115,3 +115,133 @@ class SourceRecoveryTests(unittest.TestCase):
         with patch.object(legendary, "_CONFIG_PATH", self.root):
             games = list(legendary.get_games())
         self.assertEqual([game.name for game in games], ["First", "Last"])
+
+    def test_source_loading_continues_after_a_partial_failure(self):
+        """Keep partial results and load a later healthy source."""
+        first = Game(game_id="first")
+        last = Game(game_id="last")
+
+        def broken():
+            yield first
+            raise PermissionError
+
+        modules = [
+            SimpleNamespace(ID="broken", NAME="Broken", get_games=broken),
+            SimpleNamespace(
+                ID="healthy", NAME="Healthy", get_games=lambda: iter([last])
+            ),
+        ]
+        model = sources.Gio.ListStore(item_type=sources.Source)
+        with (
+            patch.object(sources, "model", model),
+            patch.object(
+                sources.pkgutil,
+                "iter_modules",
+                return_value=[SimpleNamespace(name=module.ID) for module in modules],
+            ),
+            patch.object(sources.importlib, "import_module", side_effect=modules),
+        ):
+            sources.load()
+        self.assertEqual(
+            [[game.game_id for game in source] for source in model],
+            [["first"], ["last"]],
+        )
+
+    def test_manual_unreadable_record_does_not_hide_later_records(self):
+        """Continue after a missing record from a discovery snapshot."""
+        missing = self.root / "imported_missing.json"
+        valid = self.root / "imported_valid.json"
+        valid.write_text(
+            json.dumps({
+                "game_id": "imported_valid",
+                "source": "imported",
+                "name": "Valid",
+                "executable": "true",
+            })
+        )
+        with patch.object(imported, "get_paths", return_value=iter([missing, valid])):
+            games = list(imported.get_games())
+        self.assertEqual([game.name for game in games], ["Valid"])
+
+    def test_heroic_null_library_is_reported(self):
+        """Do not confuse an existing null JSON library with an absent store."""
+        (self.root / "sideload_apps").mkdir()
+        (self.root / "sideload_apps" / "library.json").write_text("null")
+        with (
+            patch.object(heroic, "_CONFIG_PATHS", (self.root,)),
+            self.assertLogs(heroic.__name__, level="WARNING"),
+        ):
+            self.assertEqual(list(heroic.get_games()), [])
+
+    def test_manual_out_of_range_fields_do_not_hide_later_records(self):
+        """Reject integer fields that cannot fit the model's GObject properties."""
+        good = {
+            "game_id": "imported_1",
+            "source": "imported",
+            "name": "Valid",
+            "executable": "true",
+        }
+        bad = self.root / "imported_0.json"
+        bad.write_text(json.dumps({**good, "added": 10**100}))
+        valid = self.root / "imported_1.json"
+        valid.write_text(json.dumps(good))
+        with patch.object(imported, "get_paths", return_value=iter([bad, valid])):
+            games = list(imported.get_games())
+        self.assertEqual([game.name for game in games], ["Valid"])
+
+    def test_heroic_store_indexes_preserve_installed_and_hidden_games(self):
+        """Retain valid store entries around malformed membership metadata."""
+        (self.root / "store_cache").mkdir()
+        (self.root / "store").mkdir()
+        (self.root / "store" / "config.json").write_text(
+            json.dumps({
+                "games": {"hidden": [{"appName": "first"}, None, {"appName": []}]}
+            })
+        )
+        indexes = (
+            (
+                "legendary",
+                "library",
+                "legendaryConfig/legendary/installed.json",
+                {"first": {}, "last": {}},
+            ),
+            (
+                "gog",
+                "games",
+                "gog_store/installed.json",
+                {
+                    "installed": [
+                        {"appName": "first"},
+                        None,
+                        {"appName": []},
+                        {"appName": "last"},
+                    ]
+                },
+            ),
+            (
+                "nile",
+                "library",
+                "nile_config/nile/installed.json",
+                [{"id": "first"}, None, {"id": []}, {"id": "last"}],
+            ),
+        )
+        for store, key, installed_path, installed in indexes:
+            path = self.root / installed_path
+            path.parent.mkdir(parents=True)
+            path.write_text(json.dumps(installed))
+            entries = [
+                {"app_name": name, "runner": store, "title": name}
+                for name in ("first", "uninstalled", "last")
+            ]
+            (self.root / "store_cache" / f"{store}_library.json").write_text(
+                json.dumps({key: entries})
+            )
+        with patch.object(heroic, "_CONFIG_PATHS", (self.root,)):
+            games = list(heroic.get_games())
+        expected = {
+            f"heroic_{store}_{name}"
+            for store, *_ in indexes
+            for name in ("first", "last")
+        }
+        self.assertEqual({game.game_id for game in games}, expected)
+        self.assertTrue(all(game.hidden == (game.name == "first") for game in games))
